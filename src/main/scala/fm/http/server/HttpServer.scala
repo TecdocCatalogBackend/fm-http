@@ -62,7 +62,7 @@ final case class HttpServer (
   port: Int = 8080,
   router: RequestRouter,
   authKey: String,
-  serverOptions: HttpServerOptions = HttpServerOptions.default
+  serverOptions: HttpServerOptions = HttpServerOptions.default,
 ) extends Logging {
   private[this] val name: String = s"WebServer on Port $port"
   private[this] val shutdownHookThread: Thread = new HttpServer.ShutdownHookThread(name, this)
@@ -99,22 +99,21 @@ final case class HttpServer (
     b.childOption[java.lang.Boolean](ChannelOption.TCP_NODELAY, true)
     b.childOption[java.lang.Boolean](ChannelOption.AUTO_READ, false)  // ChannelHandlerContext.read() must be explicitly called when we want a message read
     b.childHandler(new ChannelInitializer[SocketChannel] {
-       def initChannel(ch: SocketChannel): Unit = {
-         val p: ChannelPipeline = ch.pipeline()
-         
-         p.addLast("decoder",       new HttpRequestDecoder(serverOptions.maxInitialLineLength, serverOptions.maxHeaderSize, serverOptions.maxChunkSize))
-         p.addLast("encoder",       new HttpResponseEncoder())
-         p.addLast("compressor",    new NettyContentCompressor())
-         p.addLast("chunkedWriter", new ChunkedWriteHandler())
-         p.addLast("flowControl",   new FlowControlHandler()) // We only want 1 message per each ctx.read() call
-         p.addLast("handler",       new NettyHttpServerPipelineHandler(allChannels, completeRouter, serverOptions))
-         
-       }
+      def initChannel(ch: SocketChannel): Unit = {
+        val p: ChannelPipeline = ch.pipeline()
+
+        p.addLast("decoder",       new HttpRequestDecoder(serverOptions.maxInitialLineLength, serverOptions.maxHeaderSize, serverOptions.maxChunkSize))
+        p.addLast("encoder",       new HttpResponseEncoder())
+        p.addLast("compressor",    new NettyContentCompressor())
+        p.addLast("chunkedWriter", new ChunkedWriteHandler())
+        p.addLast("flowControl",   new FlowControlHandler()) // We only want 1 message per each ctx.read() call
+        p.addLast("handler",       new NettyHttpServerPipelineHandler(allChannels, completeRouter, serverOptions))
+      }
     })
-    
+
     b.bind().sync().channel()
   }
-  
+
   registerShutdownHook()
   
   logger.info(s"WebServer Started on Port $port")
@@ -158,7 +157,7 @@ final case class HttpServer (
       // Also run the afterShutdown() hook
       Future{ wrapRouterLifecycleCall("afterShutdown") { completeRouter.afterShutdown() } }(scala.concurrent.ExecutionContext.Implicits.global)
     }
-    
+
     shutdownFuture
   }
   
@@ -196,5 +195,5 @@ final case class HttpServer (
   } catch {
     case _: IllegalStateException =>
   }
-  
+
 }

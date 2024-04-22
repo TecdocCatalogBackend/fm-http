@@ -62,7 +62,7 @@ object NettyHttpServerPipelineHandler {
 final class NettyHttpServerPipelineHandler(
   channelGroup: ChannelGroup,
   router: RequestRouter,
-  options: HttpServerOptions
+  options: HttpServerOptions,
 ) extends SimpleChannelInboundHandler[HttpObject] with Logging {
   import NettyHttpServerPipelineHandler._
   
@@ -523,7 +523,7 @@ final class NettyHttpServerPipelineHandler(
   }
   
   override def exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable): Unit = {
-    logger.error(s"$id - exceptionCaught - ${ctx.channel}", cause)
+    options.httpServerExceptionHandler.doHandle(id, ctx, cause)
     if (null != contentBuilder) contentBuilder += cause
     ctx.close()
   }

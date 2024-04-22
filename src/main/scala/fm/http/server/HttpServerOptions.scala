@@ -1,6 +1,7 @@
 package fm.http.server
 
 import fm.http.Headers
+import fm.netty.exceptionhandler.{DefaultHttpServerExceptionHandler, HttpServerExceptionHandler}
 
 object HttpServerOptions {
   val default: HttpServerOptions = HttpServerOptions(None)
@@ -99,15 +100,17 @@ object HttpServerOptions {
  * @param requestHandlerExecutionContextProvider An optional RequestExecutionContextProvider instance to control which
  *                                               ExecutionContext gets passed into the RequestHandler.  Defaults to
  *                                               using the worker EventLoopGroup.
+ * @param httpServerExceptionHandler Handler for FM HTTP exceptions that occur before invoking routes
  */
 final case class HttpServerOptions(
-  requestIdResponseHeader: Option[String],
-  maxRequestsPerConnection: Long = Long.MaxValue,
-  clientIPLookupSpecs: Seq[HttpServerOptions.ClientIPLookupSpec] = Seq(HttpServerOptions.defaultClientIPLookupSpec),
-  maxInitialLineLength: Int = HttpServerOptions.defaultMaxInitialLineLength,
-  maxHeaderSize: Int = HttpServerOptions.defaultMaxHeaderSize,
-  maxChunkSize: Int = HttpServerOptions.defaultMaxChunkSize,
-  requestHandlerExecutionContextProvider: Option[RequestHandlerExecutionContextProvider] = None
+                                    requestIdResponseHeader: Option[String],
+                                    maxRequestsPerConnection: Long = Long.MaxValue,
+                                    clientIPLookupSpecs: Seq[HttpServerOptions.ClientIPLookupSpec] = Seq(HttpServerOptions.defaultClientIPLookupSpec),
+                                    maxInitialLineLength: Int = HttpServerOptions.defaultMaxInitialLineLength,
+                                    maxHeaderSize: Int = HttpServerOptions.defaultMaxHeaderSize,
+                                    maxChunkSize: Int = HttpServerOptions.defaultMaxChunkSize,
+                                    requestHandlerExecutionContextProvider: Option[RequestHandlerExecutionContextProvider] = None,
+                                    httpServerExceptionHandler: HttpServerExceptionHandler = new DefaultHttpServerExceptionHandler,
 ) {
   require(maxRequestsPerConnection > 0, "maxRequestsPerConnection must be > 0")
 }

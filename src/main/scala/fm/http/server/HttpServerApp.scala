@@ -19,6 +19,7 @@ import com.frugalmechanic.optparse._
 import fm.common.Implicits._
 import fm.common.JavaConverters._
 import fm.common.Logging
+import fm.netty.exceptionhandler.{DefaultHttpServerExceptionHandler, HttpServerExceptionHandler}
 import java.io.{BufferedReader, InputStreamReader, OutputStream, PrintStream}
 import java.net.{HttpURLConnection, URL}
 import java.lang.management.ManagementFactory
@@ -31,13 +32,13 @@ import sun.misc.{Signal, SignalHandler}
 abstract class HttpServerApp extends Logging {
   /** The RequestRouter that will handle requests */
   protected def router: RequestRouter
-  
+
   /** The secret key used by the ControlHandler */
   protected def AuthKey: String
-  
+
   /** The email username to use (if using email logging)  */
   protected def EmailUser: String
-  
+
   /** The email password to use (if using email logging)  */
   protected def EmailPass: String
 
@@ -57,16 +58,19 @@ abstract class HttpServerApp extends Logging {
 
   /** The optional ExecutionContext to run request handling on.  Will default to the Netty EventLoopGroup */
   protected def requestHandlerExecutionContextProvider: Option[RequestHandlerExecutionContextProvider] = None
-  
+
+  /** Handler for HTTP exceptions that occur before invoking routes */
+  protected def httpServerExceptionHandler(): HttpServerExceptionHandler = new DefaultHttpServerExceptionHandler
+
   private[this] val DETATCH_STRING: String = "\u0000"*4 // 4 NULL Characters
   private[this] val IS_CHILD_PROPERTY_KEY: String = "fm.webapp.is_child_process"
   private[this] val isChildProcess: Boolean = "true" === System.getProperty(IS_CHILD_PROPERTY_KEY)
-  
+
   private[this] val verbosePosix: Boolean = true
 
   private[this] val POSIX = POSIXFactory.getPOSIX(FMPOSIXHandler(verbosePosix), true)
   require(POSIX.isNative, "Expected Native POSIX implementation!")
-  
+
   object Options extends OptParse {
     val detatch = BoolOpt(desc="Daemonize after booting up")
     val start   = BoolOpt(desc="Alias for --detatch", enables=List(detatch))
@@ -75,7 +79,7 @@ abstract class HttpServerApp extends Logging {
     val port    = MultiStrOpt(desc="Which port to run on")
     val email   = BoolOpt(desc="Enable Email Logging")
   }
-  
+
   def main(args: Array[String]): Unit = {
     // Exit on uncaught exceptions
     Thread.currentThread.setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler{
@@ -84,16 +88,16 @@ abstract class HttpServerApp extends Logging {
         System.exit(1)
       }
     })
-    
+
     Options.parse(args)
-    
+
     val ports: Set[Int] = parsePorts(Options.port.getOrElse(Seq("8080")))
 
     require(ports.nonEmpty, "Missing --port option")
     require(ports.size === 1 || ports.size === 2, "We only support 1 or 2 ports")
-    
+
     println("Using port(s): "+ports.mkString(", "))
-    
+
     val emailLogging: Boolean = Options.email
 
     if      (Options.start)  doStart(ports, emailLogging = emailLogging)  // Startup in background
@@ -108,16 +112,16 @@ abstract class HttpServerApp extends Logging {
   private def parsePorts(ports: Seq[String]): Set[Int] = try {
     ports.flatMap{ _.split("""[\s,]+""").toIndexedSeq }.map{ (s: String) => s.toInt }.toSet
   } catch { case ex: NumberFormatException => println("Invalid Port: "+ex.getMessage); sys.exit(-1) }
-  
+
   /**
    * Startup the web server in the background (or if we are in the child process run it in the foreground)
    */
   private def doStart(ports: Set[Int], emailLogging: Boolean): Unit = {
     if (isChildProcess) doRun(ports, detatch = true, emailLogging = emailLogging) else doExec(ports)
   }
-  
+
   private def doStop(ports: Set[Int]): Unit = shutdownPorts(ports.filter{ alive })
-  
+
   private def doStatus(ports: Set[Int]): Unit = ports.foreach{ alive }
 
   /**
@@ -130,35 +134,36 @@ abstract class HttpServerApp extends Logging {
       maxInitialLineLength = maxInitialLineLength,
       maxHeaderSize = maxHeaderSize,
       maxChunkSize = maxChunkSize,
-      requestHandlerExecutionContextProvider = requestHandlerExecutionContextProvider
+      requestHandlerExecutionContextProvider = requestHandlerExecutionContextProvider,
+      httpServerExceptionHandler = httpServerExceptionHandler(),
     )
 
-    // Figure out which port we should listen on    
+    // Figure out which port we should listen on
     val (usedPorts, availPorts) = ports.partition{ alive }
-    
+
     if (availPorts.isEmpty) { logger.error("All Ports in use"); sys.exit(-1) }
-    
+
     val port: Int = availPorts.head
     logger.info("Using Port: "+port)
-    
+
     // Startup the Server
     val server: HttpServer = HttpServer(port, router, AuthKey, options)
-    
+
     // Check that the server is alive and responding
     assert(alive(port), "Server not alive?!")
-    
+
     server.enablePing()
 
     registerPingSignalHandlers(server)
-    
+
     if (usedPorts.nonEmpty) {
       logger.info("Allowing Load Balancer to pickup new server...")
       Thread.sleep(5000)
-      
+
       logger.info("Shutting down old servers...")
       shutdownPorts(usedPorts)
     }
-    
+
     if (emailLogging) setupEmailLogging()
 
     logger.info("Successfully Started ("+POSIX.getpid+")")
@@ -166,26 +171,26 @@ abstract class HttpServerApp extends Logging {
     if (detatch) {
       logger.info("Redirecting STDOUT/STDERR to log and Detatching...")
       println(DETATCH_STRING)
-      
+
       POSIX.setsid()
 
       System.out.close()
       System.err.close()
 
       removeConsoleLogging()
-      
+
       System.setOut(new PrintStream(new LoggingOutputStream("stdout"), true, "UTF-8"))
       System.setErr(new PrintStream(new LoggingOutputStream("stderr"), true, "UTF-8"))
     }
 
     // Block until shutdown is requested
     server.awaitShutdown()
-    
+
     // Shutdown Logging
     import ch.qos.logback.classic.LoggerContext
     LoggerFactory.getILoggerFactory.asInstanceOf[LoggerContext].stop()
   }
-  
+
   private def doExec(ports: Set[Int]): Unit = {
     println("[Launcher] Launching WebApp")
     println("[Launcher] "+makeCommand(ports, includeClasspath = false).mkString(" "))
@@ -193,7 +198,7 @@ abstract class HttpServerApp extends Logging {
     val process: Process = new ProcessBuilder(makeCommand(ports).asJava).redirectErrorStream(true).start
 
     val reader: BufferedReader = new BufferedReader(new InputStreamReader(process.getInputStream))
-    
+
     // Read and print from the child until we see the DETATCH_STRING
     var line: String = reader.readLine
     while(null != line && line != DETATCH_STRING) {
@@ -207,39 +212,39 @@ abstract class HttpServerApp extends Logging {
 
     println("[Launcher] Done")
   }
-  
+
   /**
    * Create the exec command that will be used to launch the child process
    */
   private def makeCommand(ports: Set[Int], includeClasspath: Boolean = true): Seq[String] = {
     val JAVA_HOME: String = System.getProperty("java.home")
-    
+
     val JAVA_OPTS: Seq[String] = ManagementFactory.getRuntimeMXBean.getInputArguments.asScala.toIndexedSeq ++ Seq(
       "-D"+IS_CHILD_PROPERTY_KEY+"=true"
     )
-    
+
     val clazz: String = getClass.getName
     val APP: String = if (clazz.endsWith("$")) clazz.substring(0, clazz.length-1) else clazz
     val CLASSPATH: String = System.getProperty("java.class.path")
-    
+
     val args = Vector.newBuilder[String]
     // Java Command
     args += JAVA_HOME+"/bin/java"
-    
+
     // Java Options
     args ++= JAVA_OPTS
     if (includeClasspath) args ++= Seq("-classpath", CLASSPATH)
-    
+
     // The class we are running
     args += APP
-    
+
     // APP Command Line Options:
     args += "--start"
     if (ports.nonEmpty) args ++= Seq("--port", ports.mkString(","))
-    
+
     args.result()
   }
-  
+
   def shutdownPorts(ports: Set[Int]): Unit = {
     ports.foreach{ shutdown }
 
@@ -272,7 +277,7 @@ abstract class HttpServerApp extends Logging {
     rootLogger.detachAppender("STDOUT")
     rootLogger.detachAppender("STDERR")
     rootLogger.detachAppender("CONSOLE")
-    
+
     // Detatch the event logger
     val eventLogger = ctx.getLogger("FMWebEventLogger")
     eventLogger.detachAppender("EVENTS_STDOUT")
@@ -299,11 +304,11 @@ abstract class HttpServerApp extends Logging {
       rootLogger.addAppender(emailAppender)
     }
   }
-  
+
   def alive(port: Int): Boolean = get("/_alive", port) === 200
   def ping(port: Int): Boolean = get("/_ping", port) === 200
   def shutdown(port: Int): Boolean = get("/_shutdown", port) === 200
-  
+
   def get(path: String, port: Int): Int = {
     val url: String = "http://localhost:"+port+path
     val code: Int = try {
@@ -318,7 +323,7 @@ abstract class HttpServerApp extends Logging {
 
     code
   }
-  
+
   private case class FMPOSIXHandler(verbose: Boolean) extends DefaultPOSIXHandler {
     override def isVerbose(): Boolean = verbose
   }

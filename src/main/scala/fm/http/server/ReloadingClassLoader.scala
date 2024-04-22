@@ -3,10 +3,12 @@ package fm.http.server
 import fm.common.IOUtils
 import fm.common.Implicits._
 import fm.common.JavaConverters._
+
 import java.io.InputStream
 import java.net.{URL, URLConnection}
-import java.security.{ProtectionDomain, Policy, CodeSource, CodeSigner}
+import java.security.{CodeSigner, CodeSource, Policy, ProtectionDomain}
 import java.util.concurrent.ConcurrentHashMap
+import scala.annotation.nowarn
 import scala.util.Try
 
 /**
@@ -41,9 +43,11 @@ final class ReloadingClassLoader(allowedPackages: Seq[String], parent: ClassLoad
   def addValidClasses(names: Iterable[String]): Unit = names.foreach { (name: String) =>
     timestamps.putIfAbsent(name, Long.MinValue)
   }
-  
+
   private[this] val protectionDomain: ProtectionDomain = {
-    val tmp = new ProtectionDomain(null, Policy.getPolicy().getPermissions(new CodeSource(null, null.asInstanceOf[Array[CodeSigner]])))    
+    // Require to been able to compile, because Policy is deprecated
+    @nowarn
+    val tmp = new ProtectionDomain(null, Policy.getPolicy.getPermissions(new CodeSource(null, null.asInstanceOf[Array[CodeSigner]])))
     // Set the default protected domain such that it doesn't reference this class 
     // loader which would prevent unloading.
     val f = classOf[ClassLoader].getDeclaredField("defaultDomain")

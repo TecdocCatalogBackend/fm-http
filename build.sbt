@@ -12,7 +12,7 @@ val fatalWarnings = Seq(
   // Remove "params" since we often have method signatures that intentionally have the parameters, but may not be used in every implementation, also omit "patvars" since it isn't part of the default xlint:unused and isn't super helpful
   "-Ywarn-unused:imports,privates,locals",
   // Warnings become Errors
-  "-Xfatal-warnings"
+  "-Xfatal-warnings",
 )
 
 scalacOptions := Seq(
